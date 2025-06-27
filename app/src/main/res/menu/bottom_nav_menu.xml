@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/navigation_identify"
+        android:icon="@drawable/ic_identify"
+        android:title="植物识别" />
+    <item
+        android:id="@+id/navigation_herb"
+        android:icon="@drawable/ic_herb"
+        android:title="中药材采集" />
+    <item
+        android:id="@+id/navigation_history"
+        android:icon="@drawable/ic_history"
+        android:title="历史记录" />
+</menu> 
