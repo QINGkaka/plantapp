@@ -32,6 +32,8 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".LoginActivity" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="com.example.c1.fileprovider"

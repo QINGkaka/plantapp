@@ -29,12 +29,26 @@ import android.net.Uri
 import android.os.Environment
 import java.text.SimpleDateFormat
 import java.util.*
+import com.alibaba.sdk.android.oss.OSSClient
+import com.alibaba.sdk.android.oss.ClientConfiguration
+import com.alibaba.sdk.android.oss.common.auth.OSSPlainTextAKSKCredentialProvider
+import com.alibaba.sdk.android.oss.model.PutObjectRequest
+import com.alibaba.sdk.android.oss.model.PutObjectResult
+import android.content.Context
+import android.util.Log
+import android.graphics.BitmapFactory
+import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
 
 class PlantIdentifyFragment : Fragment() {
     private lateinit var imageView: ImageView
     private lateinit var resultText: TextView
     private var imageFile: File? = null
     private var imageUri: Uri? = null
+    private lateinit var oss: OSSClient
+    private val REQUEST_CODE_PICK_IMAGE = 102
+    private lateinit var uploadProgressBar: android.widget.ProgressBar
 
     private val PERMISSIONS = arrayOf(
         Manifest.permission.CAMERA,
@@ -51,7 +65,7 @@ class PlantIdentifyFragment : Fragment() {
                 try {
                     imageView.setImageURI(Uri.fromFile(it))
                     resultText.text = "🔄 正在识别中，请稍候..."
-                    uploadImage(it)
+                    uploadImageToOSS(it)
                 } catch (e: Exception) {
                     resultText.text = "❌ 图片显示失败: ${e.message}"
                 }
@@ -76,10 +90,15 @@ class PlantIdentifyFragment : Fragment() {
             imageView = view.findViewById(R.id.imageView)
             resultText = view.findViewById(R.id.resultText)
             val btnPick = view.findViewById<Button>(R.id.btnPick)
+            uploadProgressBar = view.findViewById(R.id.uploadProgressBar)
+            uploadProgressBar.progress = 0
+            uploadProgressBar.visibility = View.GONE
 
+            // 初始化OSS
+            initOSS()
             btnPick.setOnClickListener {
                 if (checkPermissions()) {
-                    dispatchTakePictureIntent()
+                    showImageSourceDialog()
                 } else {
                     requestPermissions()
                 }
@@ -161,27 +180,180 @@ class PlantIdentifyFragment : Fragment() {
         }
     }
 
-    private fun uploadImage(file: File) {
+    private fun showImageSourceDialog() {
+        val options = arrayOf("拍照上传", "相册选择")
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("选择图片来源")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> dispatchTakePictureIntent()
+                    1 -> pickImageFromGallery()
+                }
+            }
+            .show()
+    }
+
+    private fun pickImageFromGallery() {
+        val intent = Intent(Intent.ACTION_PICK)
+        intent.type = "image/*"
+        startActivityForResult(intent, REQUEST_CODE_PICK_IMAGE)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode == Activity.RESULT_OK) {
+            when (requestCode) {
+                REQUEST_CODE_PICK_IMAGE -> {
+                    val uri = data?.data
+                    uri?.let {
+                        val file = copyUriToFile(requireContext(), it)
+                        handleImageFileForUpload(file)
+                    }
+                }
+            }
+        }
+    }
+
+    // 兼容所有Android版本：将Uri内容复制到App私有目录
+    private fun copyUriToFile(context: Context, uri: Uri): File? {
+        return try {
+            val inputStream = context.contentResolver.openInputStream(uri) ?: return null
+            val file = File(context.getExternalFilesDir(null), "identify_${System.currentTimeMillis()}.jpg")
+            val outputStream = file.outputStream()
+            inputStream.copyTo(outputStream)
+            inputStream.close()
+            outputStream.close()
+            file
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    private fun getRealPathFromUri(uri: Uri): String? {
+        var path: String? = null
+        val projection = arrayOf(MediaStore.Images.Media.DATA)
+        val cursor = requireContext().contentResolver.query(uri, projection, null, null, null)
+        cursor?.use {
+            if (it.moveToFirst()) {
+                val columnIndex = it.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
+                path = it.getString(columnIndex)
+            }
+        }
+        return path
+    }
+
+    private fun initOSS() {
+        Log.d("OSS_DEBUG", "endpoint=" + OssConfig.ENDPOINT + ", bucket=" + OssConfig.BUCKET_NAME + ", key=" + OssConfig.ACCESS_KEY_ID)
+        val endpoint = OssConfig.ENDPOINT
+        val accessKeyId = OssConfig.ACCESS_KEY_ID
+        val accessKeySecret = OssConfig.ACCESS_KEY_SECRET
+        val credentialProvider = OSSPlainTextAKSKCredentialProvider(accessKeyId, accessKeySecret)
+        val conf = ClientConfiguration().apply {
+            connectionTimeout = 60 * 1000
+            socketTimeout = 60 * 1000
+            maxConcurrentRequest = 5
+            maxErrorRetry = 2
+        }
+        oss = OSSClient(requireContext().applicationContext, endpoint, credentialProvider, conf)
+    }
+
+    private fun compressImageFile(src: File, maxSize: Int = 1024 * 1024): File {
+        val bitmap = BitmapFactory.decodeFile(src.absolutePath)
+        val outFile = File(src.parent, "compressed_${src.name}")
+        var quality = 90
+        outFile.outputStream().use { stream ->
+            do {
+                stream.flush()
+                stream.close()
+                outFile.delete()
+                outFile.createNewFile()
+                val tempStream = outFile.outputStream()
+                bitmap.compress(Bitmap.CompressFormat.JPEG, quality, tempStream)
+                tempStream.flush()
+                tempStream.close()
+                quality -= 10
+            } while (outFile.length() > maxSize && quality > 10)
+        }
+        return outFile
+    }
+
+    private fun uploadImageToOSS(localFile: File, retryCount: Int = 1) {
+        if (!localFile.exists()) {
+            if (isAdded && activity != null) {
+                activity?.runOnUiThread { resultText.text = "❌ 本地图片文件不存在，无法上传" }
+            }
+            Log.e("OSS_DEBUG", "上传前文件不存在: " + localFile.absolutePath)
+            return
+        }
+        Log.d("OSS_DEBUG", "file exists: true, path: " + localFile.absolutePath)
+        val bucketName = OssConfig.BUCKET_NAME
+        val objectKey = "identify_images/${System.currentTimeMillis()}.jpg"
+        val put = PutObjectRequest(bucketName, objectKey, localFile.absolutePath)
+        // 禁用上传按钮，防止重复上传
+        if (isAdded && activity != null) {
+            activity?.runOnUiThread {
+                view?.findViewById<Button>(R.id.btnPick)?.isEnabled = false
+                uploadProgressBar.progress = 0
+                uploadProgressBar.visibility = View.VISIBLE
+            }
+        }
+        put.progressCallback = com.alibaba.sdk.android.oss.callback.OSSProgressCallback<PutObjectRequest> { _, currentSize, totalSize ->
+            val percent = if (totalSize > 0) (currentSize * 100 / totalSize).toInt() else 0
+            activity?.runOnUiThread {
+                uploadProgressBar.progress = percent
+            }
+        }
+        Handler(Looper.getMainLooper()).postDelayed({
+            Thread {
+                try {
+                    oss.putObject(put)
+                    Log.d("OSS_DEBUG", "上传后文件存在: " + localFile.exists() + ", path: " + localFile.absolutePath)
+                    val url = "${OssConfig.OSS_URL_PREFIX}$objectKey"
+                    if (isAdded && activity != null) {
+                        activity?.runOnUiThread {
+                            view?.findViewById<Button>(R.id.btnPick)?.isEnabled = true
+                            uploadProgressBar.visibility = View.GONE
+                            uploadImageUrlToServer(url)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("OSS_DEBUG", "上传失败: ${e.message}")
+                    if (retryCount > 0) {
+                        Log.d("OSS_DEBUG", "自动重试上传...")
+                        uploadImageToOSS(localFile, retryCount - 1)
+                    } else {
+                        if (isAdded && activity != null) {
+                            activity?.runOnUiThread {
+                                view?.findViewById<Button>(R.id.btnPick)?.isEnabled = true
+                                uploadProgressBar.visibility = View.GONE
+                                resultText.text = "❌ 图片上传失败: ${e.message}"
+                            }
+                        }
+                    }
+                }
+            }.start()
+        }, 200)
+    }
+
+    private fun uploadImageUrlToServer(imageUrl: String) {
         try {
             val client = OkHttpClient()
             val requestBody = MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
-                .addFormDataPart("image", file.name, file.asRequestBody("image/*".toMediaType()))
+                .addFormDataPart("image_url", imageUrl)
                 .build()
-
             val request = Request.Builder()
-                .url("http://192.168.1.14:5000/api/identify")
+                .url(ApiConfig.PLANT_IDENTIFY_URL)
                 .post(requestBody)
                 .build()
-
             client.newCall(request).enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
                     requireActivity().runOnUiThread { resultText.text = "❌ 上传失败: ${e.message}" }
                 }
-
                 override fun onResponse(call: Call, response: Response) {
                     val res = response.body?.string() ?: "无返回"
-                    requireActivity().runOnUiThread { 
+                    requireActivity().runOnUiThread {
                         try {
                             val parsedResult = parseIdentificationResult(res)
                             resultText.text = parsedResult
@@ -254,6 +426,23 @@ class PlantIdentifyFragment : Fragment() {
             resultBuilder.toString()
         } catch (e: Exception) {
             "❌ 解析失败: ${e.message}\n\n原始数据: $jsonString"
+        }
+    }
+
+    // 拍照/选图后调用
+    private fun handleImageFileForUpload(file: File?) {
+        if (file != null && file.exists()) {
+            // 压缩图片
+            val compressed = compressImageFile(file)
+            imageFile = compressed
+            // 立即显示图片
+            imageView.setImageURI(Uri.fromFile(compressed))
+            // 延迟+防抖+重试上传
+            uploadImageToOSS(compressed, retryCount = 1)
+        } else {
+            if (isAdded && activity != null) {
+                activity?.runOnUiThread { resultText.text = "❌ 图片处理失败，文件不存在" }
+            }
         }
     }
 } 

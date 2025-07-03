@@ -15,5 +15,6 @@ data class HerbRecord(
     val latitude: Double,
     val collectionTime: Date,
     val imagePath: String,
-    val status: String = "已上传"
+    val status: String = "已上传",
+    val batchCode: String = ""
 ) 

@@ -97,6 +97,16 @@
 
         </androidx.cardview.widget.CardView>
 
+        <ProgressBar
+            android:id="@+id/uploadProgressBar"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="8dp"
+            android:visibility="gone"
+            android:max="100"
+            android:progress="0"
+            android:layout_marginBottom="16dp"/>
+
         <!-- 识别结果区域 -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"

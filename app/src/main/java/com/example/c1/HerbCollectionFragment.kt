@@ -1,6 +1,7 @@
 package com.example.c1
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
@@ -28,13 +29,25 @@ import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
+import com.alibaba.sdk.android.oss.OSSClient
+import com.alibaba.sdk.android.oss.ClientConfiguration
+import com.alibaba.sdk.android.oss.common.auth.OSSPlainTextAKSKCredentialProvider
+import com.alibaba.sdk.android.oss.model.PutObjectRequest
+import com.alibaba.sdk.android.oss.model.PutObjectResult
+import com.example.c1.ApiConfig
+import com.example.c1.OssConfig
+import android.util.Log
+import android.graphics.BitmapFactory
+import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
 
 class HerbCollectionFragment : Fragment() {
     private lateinit var herbImageView: ImageView
     private lateinit var tvLocation: TextView
     private lateinit var etHerbName: AutoCompleteTextView
-    private lateinit var etHerbOrigin: EditText
     private lateinit var etBatchCode: EditText
+    private lateinit var etHerbOrigin: EditText
     private lateinit var etLocationCount: EditText
     private lateinit var etTemperature: EditText
     private lateinit var etHumidity: EditText
@@ -50,6 +63,9 @@ class HerbCollectionFragment : Fragment() {
     private var currentLongitude: Double = 0.0
     private lateinit var locationManager: LocationManager
     private var currentLocationListener: LocationListener? = null
+    private lateinit var oss: OSSClient
+    private val REQUEST_CODE_PICK_IMAGE = 102
+    private val REQUEST_CODE_TAKE_PHOTO = 103
 
     private val permissions = arrayOf(
         Manifest.permission.CAMERA,
@@ -101,7 +117,8 @@ class HerbCollectionFragment : Fragment() {
             setupLocationManager()
             setupClickListeners()
             setupHerbNameSpinner()
-            
+            // 初始化OSS
+            initOSS()
             // 检查并申请权限
             if (checkPermissions()) {
                 getCurrentLocation()
@@ -118,6 +135,8 @@ class HerbCollectionFragment : Fragment() {
             herbImageView = view.findViewById(R.id.herbImageView)
             tvLocation = view.findViewById(R.id.tvLocation)
             etHerbName = view.findViewById(R.id.etHerbName)
+            etBatchCode = view.findViewById(R.id.etBatchCode)
+            etHerbOrigin = view.findViewById(R.id.etHerbOrigin)
             etLocationCount = view.findViewById(R.id.etLocationCount)
             etTemperature = view.findViewById(R.id.etTemperature)
             etHumidity = view.findViewById(R.id.etHumidity)
@@ -148,7 +167,7 @@ class HerbCollectionFragment : Fragment() {
     private fun setupClickListeners() {
         btnTakeHerbPhoto.setOnClickListener {
             if (checkPermissions()) {
-                dispatchTakePictureIntent()
+                showImageSourceDialog()
             } else {
                 requestPermissions()
             }
@@ -342,95 +361,73 @@ class HerbCollectionFragment : Fragment() {
     }
 
     private fun submitHerbData() {
-        try {
-            btnSubmitHerb.isEnabled = false
-            btnSubmitHerb.text = "🔄 提交中..."
-
-            val client = OkHttpClient()
-            
-            // 构建请求体
-            val requestBodyBuilder = MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("herb_name", etHerbName.text.toString())
-                .addFormDataPart("location_count", etLocationCount.text.toString())
-                .addFormDataPart("temperature", etTemperature.text.toString())
-                .addFormDataPart("humidity", etHumidity.text.toString())
-                .addFormDataPart("district", etDistrict.text.toString())
-                .addFormDataPart("street", etStreet.text.toString())
-                .addFormDataPart("growth_des", etGrowthDescription.text.toString())
-                .addFormDataPart("location_longitude", currentLongitude.toString())
-                .addFormDataPart("location_latitude", currentLatitude.toString())
-                .addFormDataPart("user_id", "1") // 默认用户ID
-                .addFormDataPart("herb_isvalid", "true")
-                .addFormDataPart("growth_time", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))
-
-            // 添加图片
-            imageFile?.let { file ->
-                requestBodyBuilder.addFormDataPart("herb_img", file.name, file.asRequestBody("image/*".toMediaType()))
-                requestBodyBuilder.addFormDataPart("growth_img", file.name, file.asRequestBody("image/*".toMediaType()))
-            }
-
-            val requestBody = requestBodyBuilder.build()
-
-            val request = Request.Builder()
-                .url("http://192.168.51.139:5000/api/herb/upload")
-                .post(requestBody)
-                .build()
-
-            client.newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    requireActivity().runOnUiThread { 
-                        btnSubmitHerb.isEnabled = true
-                        btnSubmitHerb.text = "✅ 提交中药材信息"
-                        Toast.makeText(context, "❌ 上传失败: ${e.message}", Toast.LENGTH_LONG).show()
-                    }
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    val responseBody = response.body?.string() ?: "无返回"
-                    requireActivity().runOnUiThread { 
-                        btnSubmitHerb.isEnabled = true
-                        btnSubmitHerb.text = "✅ 提交中药材信息"
-                        
-                        try {
-                            val jsonResponse = JSONObject(responseBody)
-                            if (response.isSuccessful) {
-                                Toast.makeText(context, "✅ 中药材信息上传成功！", Toast.LENGTH_LONG).show()
-                                
-                                // 创建新记录并添加到历史记录
-                                val newRecord = HerbRecord(
-                                    id = System.currentTimeMillis().toString(),
-                                    herbName = etHerbName.text.toString(),
-                                    locationCount = etLocationCount.text.toString(),
-                                    temperature = etTemperature.text.toString(),
-                                    humidity = etHumidity.text.toString(),
-                                    district = etDistrict.text.toString(),
-                                    street = etStreet.text.toString(),
-                                    growthDescription = etGrowthDescription.text.toString(),
-                                    longitude = currentLongitude,
-                                    latitude = currentLatitude,
-                                    collectionTime = Date(),
-                                    imagePath = imageFile?.absolutePath ?: ""
-                                )
-                                
-                                // 返回历史记录页面并添加新记录
-                                returnToHistoryWithNewRecord(newRecord)
-                            } else {
-                                Toast.makeText(context, "❌ 上传失败: ${jsonResponse.optString("message", "未知错误")}", Toast.LENGTH_LONG).show()
-                            }
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "❌ 响应解析失败: ${e.message}", Toast.LENGTH_LONG).show()
-                        }
-                    }
-                }
-            })
-        } catch (e: Exception) {
-            requireActivity().runOnUiThread { 
-                btnSubmitHerb.isEnabled = true
-                btnSubmitHerb.text = "✅ 提交中药材信息"
-                Toast.makeText(context, "❌ 网络请求失败: ${e.message}", Toast.LENGTH_LONG).show()
-            }
+        if (imageFile == null) {
+            Toast.makeText(context, "请先拍摄或选择中药材图片", Toast.LENGTH_SHORT).show()
+            return
         }
+        btnSubmitHerb.isEnabled = false
+        btnSubmitHerb.text = "🔄 图片上传中..."
+        uploadImageToOSS(imageFile!!, { ossUrl ->
+            btnSubmitHerb.text = "🔄 信息提交中..."
+            submitGrowthRecord(ossUrl)
+        }, { errorMsg ->
+            btnSubmitHerb.isEnabled = true
+            btnSubmitHerb.text = "✅ 提交中药材信息"
+            Toast.makeText(context, "❌ 图片上传失败: $errorMsg", Toast.LENGTH_LONG).show()
+        })
+    }
+
+    private fun submitGrowthRecord(imgUrl: String) {
+        val prefs = requireContext().getSharedPreferences("user", Context.MODE_PRIVATE)
+        val token = prefs.getString("token", null)
+        if (token.isNullOrBlank()) {
+            Toast.makeText(context, "请先登录", Toast.LENGTH_SHORT).show()
+            btnSubmitHerb.isEnabled = true
+            btnSubmitHerb.text = "✅ 提交中药材信息"
+            return
+        }
+        val client = OkHttpClient()
+        // 构造JSON对象
+        val json = org.json.JSONObject()
+        json.put("herbName", etHerbName.text.toString())
+        json.put("batchCode", etBatchCode.text.toString())
+        json.put("wet", etHumidity.text.toString())
+        json.put("temperature", etTemperature.text.toString())
+        json.put("longitude", currentLongitude)
+        json.put("latitude", currentLatitude)
+        json.put("imgUrl", imgUrl)
+        if (!etGrowthDescription.text.isNullOrBlank()) {
+            json.put("des", etGrowthDescription.text.toString())
+        }
+        val requestBody = RequestBody.create("application/json; charset=utf-8".toMediaType(), json.toString())
+        val request = Request.Builder()
+            .url(ApiConfig.BASE_URL + "herb-info-service/growth")
+            .addHeader("Authorization", "Bearer $token")
+            .post(requestBody)
+            .build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                requireActivity().runOnUiThread {
+                    btnSubmitHerb.isEnabled = true
+                    btnSubmitHerb.text = "✅ 提交中药材信息"
+                    Toast.makeText(context, "提交失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val res = response.body?.string() ?: ""
+                requireActivity().runOnUiThread {
+                    btnSubmitHerb.isEnabled = true
+                    btnSubmitHerb.text = "✅ 提交中药材信息"
+                    val obj = try { org.json.JSONObject(res) } catch (e: Exception) { null }
+                    if (obj != null && obj.optInt("code") == 0) {
+                        Toast.makeText(context, "生长记录提交成功", Toast.LENGTH_LONG).show()
+                        clearForm()
+                    } else {
+                        Toast.makeText(context, obj?.optString("message", "提交失败") ?: "提交失败", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        })
     }
 
     private fun clearForm() {
@@ -499,6 +496,169 @@ class HerbCollectionFragment : Fragment() {
         etLatitude.setText(String.format(Locale.getDefault(), "%.6f", currentLatitude))
         
         dialog.show()
+    }
+
+    private fun showImageSourceDialog() {
+        val options = arrayOf("拍照上传", "相册选择")
+        AlertDialog.Builder(requireContext())
+            .setTitle("选择图片来源")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> dispatchTakePictureIntent()
+                    1 -> pickImageFromGallery()
+                }
+            }
+            .show()
+    }
+
+    private fun pickImageFromGallery() {
+        val intent = Intent(Intent.ACTION_PICK)
+        intent.type = "image/*"
+        startActivityForResult(intent, REQUEST_CODE_PICK_IMAGE)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode == android.app.Activity.RESULT_OK && data != null) {
+            when (requestCode) {
+                REQUEST_CODE_PICK_IMAGE -> {
+                    val uri = data.data
+                    uri?.let {
+                        val file = copyUriToFile(requireContext(), it)
+                        handleImageFileForUpload(file)
+                    }
+                }
+                REQUEST_CODE_TAKE_PHOTO -> {
+                    imageUri?.let {
+                        val file = copyUriToFile(requireContext(), it)
+                        handleImageFileForUpload(file)
+                    }
+                }
+            }
+        }
+    }
+
+    // 兼容所有Android版本：将Uri内容复制到App私有目录
+    private fun copyUriToFile(context: Context, uri: Uri): File? {
+        return try {
+            val inputStream = context.contentResolver.openInputStream(uri) ?: return null
+            val file = File(context.getExternalFilesDir(null), "herb_${System.currentTimeMillis()}.jpg")
+            val outputStream = file.outputStream()
+            inputStream.copyTo(outputStream)
+            inputStream.close()
+            outputStream.close()
+            file
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    private fun compressImageFile(src: File, maxSize: Int = 1024 * 1024): File {
+        val bitmap = BitmapFactory.decodeFile(src.absolutePath)
+        val outFile = File(src.parent, "compressed_${src.name}")
+        var quality = 90
+        outFile.outputStream().use { stream ->
+            do {
+                stream.flush()
+                stream.close()
+                outFile.delete()
+                outFile.createNewFile()
+                val tempStream = outFile.outputStream()
+                bitmap.compress(Bitmap.CompressFormat.JPEG, quality, tempStream)
+                tempStream.flush()
+                tempStream.close()
+                quality -= 10
+            } while (outFile.length() > maxSize && quality > 10)
+        }
+        return outFile
+    }
+
+    private fun uploadImageToOSS(localFile: File, onSuccess: (String) -> Unit, onError: (String) -> Unit, retryCount: Int = 1) {
+        if (!localFile.exists()) {
+            if (isAdded && activity != null) {
+                activity?.runOnUiThread { onError("本地图片文件不存在，无法上传") }
+            }
+            Log.e("OSS_DEBUG", "上传前文件不存在: " + localFile.absolutePath)
+            return
+        }
+        Log.d("OSS_DEBUG", "file exists: true, path: " + localFile.absolutePath)
+        val bucketName = OssConfig.BUCKET_NAME
+        val objectKey = "herb_images/${System.currentTimeMillis()}.jpg"
+        val put = PutObjectRequest(bucketName, objectKey, localFile.absolutePath)
+        // 禁用上传按钮，防止重复上传
+        if (isAdded && activity != null) {
+            activity?.runOnUiThread {
+                btnSubmitHerb.isEnabled = false
+            }
+        }
+        Handler(Looper.getMainLooper()).postDelayed({
+            Thread {
+                try {
+                    oss.putObject(put)
+                    Log.d("OSS_DEBUG", "上传后文件存在: " + localFile.exists() + ", path: " + localFile.absolutePath)
+                    val url = "${OssConfig.OSS_URL_PREFIX}$objectKey"
+                    if (isAdded && activity != null) {
+                        activity?.runOnUiThread {
+                            btnSubmitHerb.isEnabled = true
+                            onSuccess(url)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("OSS_DEBUG", "上传失败: ${e.message}")
+                    if (retryCount > 0) {
+                        Log.d("OSS_DEBUG", "自动重试上传...")
+                        uploadImageToOSS(localFile, onSuccess, onError, retryCount - 1)
+                    } else {
+                        if (isAdded && activity != null) {
+                            activity?.runOnUiThread {
+                                btnSubmitHerb.isEnabled = true
+                                onError(e.message ?: "未知错误")
+                            }
+                        }
+                    }
+                }
+            }.start()
+        }, 200)
+    }
+
+    // 拍照/选图后调用
+    private fun handleImageFileForUpload(file: File?) {
+        if (file != null && file.exists()) {
+            // 压缩图片
+            val compressed = compressImageFile(file)
+            imageFile = compressed
+            // 立即显示图片
+            herbImageView.setImageBitmap(BitmapFactory.decodeFile(compressed.absolutePath))
+            // 延迟+防抖+重试上传
+            uploadImageToOSS(compressed, { ossUrl ->
+                btnSubmitHerb.text = "🔄 信息提交中..."
+                submitGrowthRecord(ossUrl)
+            }, { errorMsg ->
+                btnSubmitHerb.isEnabled = true
+                btnSubmitHerb.text = "✅ 提交中药材信息"
+                Toast.makeText(context, "❌ 图片上传失败: $errorMsg", Toast.LENGTH_LONG).show()
+            }, retryCount = 1)
+        } else {
+            if (isAdded && activity != null) {
+                activity?.runOnUiThread { Toast.makeText(context, "❌ 图片处理失败，文件不存在", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
+    private fun initOSS() {
+        Log.d("OSS_DEBUG", "endpoint=" + OssConfig.ENDPOINT + ", bucket=" + OssConfig.BUCKET_NAME + ", key=" + OssConfig.ACCESS_KEY_ID)
+        val endpoint = OssConfig.ENDPOINT
+        val accessKeyId = OssConfig.ACCESS_KEY_ID
+        val accessKeySecret = OssConfig.ACCESS_KEY_SECRET
+        val credentialProvider = OSSPlainTextAKSKCredentialProvider(accessKeyId, accessKeySecret)
+        val conf = ClientConfiguration().apply {
+            connectionTimeout = 60 * 1000
+            socketTimeout = 60 * 1000
+            maxConcurrentRequest = 5
+            maxErrorRetry = 2
+        }
+        oss = OSSClient(requireContext().applicationContext, endpoint, credentialProvider, conf)
     }
 
     override fun onDestroyView() {

@@ -1,5 +1,7 @@
 package com.example.c1
 
+import android.app.AlertDialog
+import android.content.Context
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -10,6 +12,10 @@ import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import okhttp3.*
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.IOException
 import java.util.*
 
 class HerbHistoryFragment : Fragment() {
@@ -19,6 +25,8 @@ class HerbHistoryFragment : Fragment() {
     
     // 模拟数据，实际应用中应该从数据库或网络获取
     private val herbRecords = mutableListOf<HerbRecord>()
+    private var userId: Int? = null
+    private var token: String? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -34,7 +42,7 @@ class HerbHistoryFragment : Fragment() {
         initializeViews(view)
         setupRecyclerView()
         setupClickListeners()
-        loadHerbHistory()
+        loadUserInfoAndHistory()
     }
 
     private fun initializeViews(view: View) {
@@ -54,50 +62,87 @@ class HerbHistoryFragment : Fragment() {
         }
     }
 
-    private fun loadHerbHistory() {
-        // 这里应该从数据库或网络加载数据
-        // 目前使用模拟数据
-        loadMockData()
-        updateUI()
+    private fun loadUserInfoAndHistory() {
+        val prefs = requireContext().getSharedPreferences("user", Context.MODE_PRIVATE)
+        token = prefs.getString("token", null)
+        if (token.isNullOrBlank()) {
+            Toast.makeText(context, "请先登录", Toast.LENGTH_SHORT).show()
+            return
+        }
+        // 获取用户ID
+        val client = OkHttpClient()
+        val request = Request.Builder()
+            .url(ApiConfig.BASE_URL + "his-user-service/account/info/me")
+            .addHeader("Authorization", "Bearer $token")
+            .get()
+            .build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                requireActivity().runOnUiThread {
+                    Toast.makeText(context, "获取用户信息失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val res = response.body?.string() ?: ""
+                val obj = try { JSONObject(res) } catch (e: Exception) { null }
+                val user = obj?.optJSONObject("user")
+                userId = user?.optInt("id")
+                if (userId != null) {
+                    loadUserGrowthRecords()
+                } else {
+                    requireActivity().runOnUiThread {
+                        Toast.makeText(context, "获取用户ID失败", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        })
     }
 
-    private fun loadMockData() {
-        // 模拟一些历史记录数据
-        herbRecords.clear()
-        
-        // 添加一些示例数据
-        herbRecords.add(
-            HerbRecord(
-                id = "1",
-                herbName = "人参",
-                locationCount = "5",
-                temperature = "22.5",
-                humidity = "75.0",
-                district = "吉林省",
-                street = "长白山区",
-                growthDescription = "野生人参，生长在海拔1500米的山林中",
-                longitude = 128.123456,
-                latitude = 42.123456,
-                collectionTime = Date(),
-                imagePath = "/path/to/image1.jpg"
-            )
-        )
-        
-        herbRecords.add(
-            HerbRecord(
-                id = "2",
-                herbName = "当归",
-                locationCount = "3",
-                temperature = "18.0",
-                humidity = "65.0",
-                district = "甘肃省",
-                street = "岷县",
-                growthDescription = "栽培当归，生长良好",
-                longitude = 104.123456,
-                latitude = 34.123456,
-                collectionTime = Date(System.currentTimeMillis() - 86400000), // 昨天
-                imagePath = "/path/to/image2.jpg"
-            )
+    private fun loadUserGrowthRecords() {
+        val uid = userId ?: return
+        val client = OkHttpClient()
+        val request = Request.Builder()
+            .url(ApiConfig.BASE_URL + "herb-info-service/growth/user/$uid")
+            .get()
+            .build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                requireActivity().runOnUiThread {
+                    Toast.makeText(context, "获取历史记录失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val res = response.body?.string() ?: ""
+                val obj = try { JSONObject(res) } catch (e: Exception) { null }
+                val arr = obj?.optJSONArray("herbGrowths")
+                herbRecords.clear()
+                if (arr != null) {
+                    for (i in 0 until arr.length()) {
+                        val item = arr.getJSONObject(i)
+                        herbRecords.add(jsonToHerbRecord(item))
+                    }
+                }
+                requireActivity().runOnUiThread { updateUI() }
+            }
+        })
+    }
+
+    private fun jsonToHerbRecord(obj: JSONObject): HerbRecord {
+        return HerbRecord(
+            id = obj.optInt("id").toString(),
+            herbName = obj.optString("herbName"),
+            locationCount = "-", // 可根据实际API补充
+            temperature = obj.optDouble("temperature").toString(),
+            humidity = obj.optDouble("wet").toString(),
+            district = "-", // 可根据实际API补充
+            street = "-", // 可根据实际API补充
+            growthDescription = obj.optString("des"),
+            longitude = obj.optDouble("longitude"),
+            latitude = obj.optDouble("latitude"),
+            collectionTime = Date(), // 可解析recordTime
+            imagePath = obj.optString("imgUrl"),
+            status = "已上传",
+            batchCode = obj.optString("batchCode")
         )
     }
 
@@ -108,10 +153,11 @@ class HerbHistoryFragment : Fragment() {
         } else {
             rvHerbHistory.visibility = View.VISIBLE
             emptyStateLayout.visibility = View.GONE
-            
-            val adapter = HerbHistoryAdapter(herbRecords) { record ->
-                showRecordDetail(record)
-            }
+            val adapter = HerbHistoryAdapter(herbRecords,
+                { record -> showRecordDetail(record) },
+                { record -> confirmDeleteRecord(record) },
+                { record -> showBatchTrace(record.batchCode) }
+            )
             rvHerbHistory.adapter = adapter
         }
     }
@@ -133,6 +179,76 @@ class HerbHistoryFragment : Fragment() {
         """.trimIndent()
         
         Toast.makeText(context, detailMessage, Toast.LENGTH_LONG).show()
+    }
+
+    private fun confirmDeleteRecord(record: HerbRecord) {
+        AlertDialog.Builder(requireContext())
+            .setTitle("确认删除")
+            .setMessage("确定要删除该生长记录吗？")
+            .setPositiveButton("删除") { _, _ -> deleteGrowthRecord(record.id) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun deleteGrowthRecord(growthId: String) {
+        val tk = token ?: return
+        val client = OkHttpClient()
+        val request = Request.Builder()
+            .url(ApiConfig.BASE_URL + "herb-info-service/growth/$growthId")
+            .addHeader("Authorization", "Bearer $tk")
+            .delete()
+            .build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                requireActivity().runOnUiThread {
+                    Toast.makeText(context, "删除失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                requireActivity().runOnUiThread {
+                    Toast.makeText(context, "删除成功", Toast.LENGTH_SHORT).show()
+                    loadUserGrowthRecords()
+                }
+            }
+        })
+    }
+
+    private fun showBatchTrace(batchCode: String) {
+        val tk = token ?: return
+        val client = OkHttpClient()
+        val request = Request.Builder()
+            .url(ApiConfig.BASE_URL + "herb-info-service/growth/batch/$batchCode")
+            .addHeader("Authorization", "Bearer $tk")
+            .get()
+            .build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                requireActivity().runOnUiThread {
+                    Toast.makeText(context, "批次溯源失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val res = response.body?.string() ?: ""
+                val obj = try { JSONObject(res) } catch (e: Exception) { null }
+                val arr = obj?.optJSONArray("herbGrowths")
+                val msg = StringBuilder()
+                if (arr != null && arr.length() > 0) {
+                    for (i in 0 until arr.length()) {
+                        val item = arr.getJSONObject(i)
+                        msg.append("${i+1}. ${item.optString("herbName")} 批次:${item.optString("batchCode")} 温度:${item.optDouble("temperature")} 湿度:${item.optDouble("wet")}\n")
+                    }
+                } else {
+                    msg.append("无该批次记录")
+                }
+                requireActivity().runOnUiThread {
+                    AlertDialog.Builder(requireContext())
+                        .setTitle("批次溯源：$batchCode")
+                        .setMessage(msg.toString())
+                        .setPositiveButton("确定", null)
+                        .show()
+                }
+            }
+        })
     }
 
     private fun switchToCollectionFragment() {

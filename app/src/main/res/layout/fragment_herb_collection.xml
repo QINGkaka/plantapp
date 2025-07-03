@@ -113,14 +113,52 @@
                 <com.google.android.material.textfield.TextInputLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginBottom="12dp"
+                    android:layout_marginBottom="8dp"
                     android:hint="中药名称（如：人参、当归）"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
 
                     <AutoCompleteTextView
                         android:id="@+id/etHerbName"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
+                        android:layout_height="56dp"
+                        android:textSize="16sp"
+                        android:paddingVertical="8dp"
+                        android:inputType="text"/>
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <!-- 批次编码 -->
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:hint="批次编码"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etBatchCode"
+                        android:layout_width="match_parent"
+                        android:layout_height="56dp"
+                        android:textSize="16sp"
+                        android:paddingVertical="8dp"
+                        android:inputType="text"/>
+
+                </com.google.android.material.textfield.TextInputLayout>
+                
+                <!-- 药材产地 -->
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:hint="药材产地"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etHerbOrigin"
+                        android:layout_width="match_parent"
+                        android:layout_height="56dp"
+                        android:textSize="16sp"
+                        android:paddingVertical="8dp"
                         android:inputType="text"/>
 
                 </com.google.android.material.textfield.TextInputLayout>
@@ -129,17 +167,62 @@
                 <com.google.android.material.textfield.TextInputLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginBottom="12dp"
+                    android:layout_marginBottom="8dp"
                     android:hint="发现数量（株）"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etLocationCount"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
+                        android:layout_height="56dp"
+                        android:textSize="16sp"
+                        android:paddingVertical="8dp"
                         android:inputType="number"/>
 
                 </com.google.android.material.textfield.TextInputLayout>
+
+                <!-- 环境温度湿度同一行 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="8dp">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:hint="温度（°C）"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_marginEnd="8dp">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etTemperature"
+                            android:layout_width="match_parent"
+                            android:layout_height="56dp"
+                            android:textSize="16sp"
+                            android:paddingVertical="8dp"
+                            android:inputType="numberDecimal"/>
+
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:hint="湿度（%）"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etHumidity"
+                            android:layout_width="match_parent"
+                            android:layout_height="56dp"
+                            android:textSize="16sp"
+                            android:paddingVertical="8dp"
+                            android:inputType="numberDecimal"/>
+
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
 
             </LinearLayout>
         </androidx.cardview.widget.CardView>
