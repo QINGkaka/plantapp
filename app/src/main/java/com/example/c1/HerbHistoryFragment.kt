@@ -13,7 +13,6 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import okhttp3.*
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.*
@@ -22,10 +21,8 @@ class HerbHistoryFragment : Fragment() {
     private lateinit var rvHerbHistory: RecyclerView
     private lateinit var emptyStateLayout: LinearLayout
     private lateinit var fabAddHerb: FloatingActionButton
-    
-    // 模拟数据，实际应用中应该从数据库或网络获取
+
     private val herbRecords = mutableListOf<HerbRecord>()
-    private var userId: Int? = null
     private var token: String? = null
 
     override fun onCreateView(
@@ -42,7 +39,7 @@ class HerbHistoryFragment : Fragment() {
         initializeViews(view)
         setupRecyclerView()
         setupClickListeners()
-        loadUserInfoAndHistory()
+        loadUserGrowthRecordsByToken()
     }
 
     private fun initializeViews(view: View) {
@@ -62,47 +59,18 @@ class HerbHistoryFragment : Fragment() {
         }
     }
 
-    private fun loadUserInfoAndHistory() {
+    private fun loadUserGrowthRecordsByToken() {
         val prefs = requireContext().getSharedPreferences("user", Context.MODE_PRIVATE)
-        token = prefs.getString("token", null)
+        val token = prefs.getString("token", null)
         if (token.isNullOrBlank()) {
             Toast.makeText(context, "请先登录", Toast.LENGTH_SHORT).show()
             return
         }
-        // 获取用户ID
+        this.token = token
         val client = OkHttpClient()
         val request = Request.Builder()
-            .url(ApiConfig.BASE_URL + "his-user-service/account/info/me")
+            .url(ApiConfig.BASE_URL + "herb-info-service/growth/userToken")
             .addHeader("Authorization", "Bearer $token")
-            .get()
-            .build()
-        client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                requireActivity().runOnUiThread {
-                    Toast.makeText(context, "获取用户信息失败: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-            override fun onResponse(call: Call, response: Response) {
-                val res = response.body?.string() ?: ""
-                val obj = try { JSONObject(res) } catch (e: Exception) { null }
-                val user = obj?.optJSONObject("user")
-                userId = user?.optInt("id")
-                if (userId != null) {
-                    loadUserGrowthRecords()
-                } else {
-                    requireActivity().runOnUiThread {
-                        Toast.makeText(context, "获取用户ID失败", Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
-        })
-    }
-
-    private fun loadUserGrowthRecords() {
-        val uid = userId ?: return
-        val client = OkHttpClient()
-        val request = Request.Builder()
-            .url(ApiConfig.BASE_URL + "herb-info-service/growth/user/$uid")
             .get()
             .build()
         client.newCall(request).enqueue(object : Callback {
@@ -155,8 +123,7 @@ class HerbHistoryFragment : Fragment() {
             emptyStateLayout.visibility = View.GONE
             val adapter = HerbHistoryAdapter(herbRecords,
                 { record -> showRecordDetail(record) },
-                { record -> confirmDeleteRecord(record) },
-                { record -> showBatchTrace(record.batchCode) }
+                { record -> confirmDeleteRecord(record) }
             )
             rvHerbHistory.adapter = adapter
         }
@@ -207,45 +174,7 @@ class HerbHistoryFragment : Fragment() {
             override fun onResponse(call: Call, response: Response) {
                 requireActivity().runOnUiThread {
                     Toast.makeText(context, "删除成功", Toast.LENGTH_SHORT).show()
-                    loadUserGrowthRecords()
-                }
-            }
-        })
-    }
-
-    private fun showBatchTrace(batchCode: String) {
-        val tk = token ?: return
-        val client = OkHttpClient()
-        val request = Request.Builder()
-            .url(ApiConfig.BASE_URL + "herb-info-service/growth/batch/$batchCode")
-            .addHeader("Authorization", "Bearer $tk")
-            .get()
-            .build()
-        client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                requireActivity().runOnUiThread {
-                    Toast.makeText(context, "批次溯源失败: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-            override fun onResponse(call: Call, response: Response) {
-                val res = response.body?.string() ?: ""
-                val obj = try { JSONObject(res) } catch (e: Exception) { null }
-                val arr = obj?.optJSONArray("herbGrowths")
-                val msg = StringBuilder()
-                if (arr != null && arr.length() > 0) {
-                    for (i in 0 until arr.length()) {
-                        val item = arr.getJSONObject(i)
-                        msg.append("${i+1}. ${item.optString("herbName")} 批次:${item.optString("batchCode")} 温度:${item.optDouble("temperature")} 湿度:${item.optDouble("wet")}\n")
-                    }
-                } else {
-                    msg.append("无该批次记录")
-                }
-                requireActivity().runOnUiThread {
-                    AlertDialog.Builder(requireContext())
-                        .setTitle("批次溯源：$batchCode")
-                        .setMessage(msg.toString())
-                        .setPositiveButton("确定", null)
-                        .show()
+                    loadUserGrowthRecordsByToken()
                 }
             }
         })

@@ -13,8 +13,7 @@ import java.util.*
 class HerbHistoryAdapter(
     private val herbRecords: List<HerbRecord>,
     private val onItemClick: (HerbRecord) -> Unit,
-    private val onDeleteClick: (HerbRecord) -> Unit,
-    private val onTraceBatchClick: (HerbRecord) -> Unit
+    private val onDeleteClick: (HerbRecord) -> Unit
 ) : RecyclerView.Adapter<HerbHistoryAdapter.ViewHolder>() {
 
     class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -24,7 +23,6 @@ class HerbHistoryAdapter(
         val tvLocation: TextView = view.findViewById(R.id.tvLocation)
         val tvStatus: TextView = view.findViewById(R.id.tvStatus)
         val btnDelete: Button = view.findViewById(R.id.btnDelete)
-        val btnTraceBatch: Button = view.findViewById(R.id.btnTraceBatch)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -47,9 +45,6 @@ class HerbHistoryAdapter(
         }
         holder.btnDelete.setOnClickListener {
             onDeleteClick(record)
-        }
-        holder.btnTraceBatch.setOnClickListener {
-            onTraceBatchClick(record)
         }
     }
 

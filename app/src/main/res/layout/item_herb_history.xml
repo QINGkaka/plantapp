@@ -93,7 +93,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="批次溯源"
-                    android:textSize="12sp"/>
+                    android:textSize="12sp"
+                    android:visibility="gone"/>
             </LinearLayout>
 
         </LinearLayout>
