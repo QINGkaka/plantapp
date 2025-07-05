@@ -7,6 +7,8 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import android.util.Log
+import com.bumptech.glide.Glide
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -33,6 +35,21 @@ class HerbHistoryAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val record = herbRecords[position]
+        
+        // 加载图片
+        Log.d("HerbHistoryAdapter", "图片URL: ${record.imagePath}")
+        if (!record.imagePath.isNullOrBlank()) {
+            Glide.with(holder.ivHerbImage.context)
+                .load(record.imagePath)
+                .centerCrop()
+                .placeholder(R.mipmap.ic_launcher)
+                .error(R.mipmap.ic_launcher)
+                .into(holder.ivHerbImage)
+            Log.d("HerbHistoryAdapter", "正在加载图片: ${record.imagePath}")
+        } else {
+            holder.ivHerbImage.setImageResource(R.mipmap.ic_launcher)
+            Log.d("HerbHistoryAdapter", "图片URL为空，使用默认图片")
+        }
         
         holder.tvHerbName.text = record.herbName
         holder.tvCollectionTime.text = "采集时间：${formatDate(record.collectionTime)}"

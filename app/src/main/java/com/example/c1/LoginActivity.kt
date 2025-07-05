@@ -289,12 +289,17 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun takeAvatarPhoto() {
-        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-        val photoFile = createAvatarFile()
-        avatarFile = photoFile
-        avatarUri = FileProvider.getUriForFile(this, "com.example.c1.fileprovider", photoFile)
-        intent.putExtra(MediaStore.EXTRA_OUTPUT, avatarUri)
-        startActivityForResult(intent, REQUEST_CODE_TAKE_PHOTO)
+        try {
+            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            val photoFile = createAvatarFile()
+            avatarFile = photoFile
+            avatarUri = FileProvider.getUriForFile(this, "com.example.c1.fileprovider", photoFile)
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, avatarUri)
+            startActivityForResult(intent, REQUEST_CODE_TAKE_PHOTO)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "拍照功能初始化失败: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun pickAvatarFromGallery() {
@@ -313,19 +318,12 @@ class LoginActivity : AppCompatActivity() {
         val bitmap = BitmapFactory.decodeFile(src.absolutePath)
         val outFile = File(src.parent, "compressed_${src.name}")
         var quality = 90
-        outFile.outputStream().use { stream ->
-            do {
-                stream.flush()
-                stream.close()
-                outFile.delete()
-                outFile.createNewFile()
-                val tempStream = outFile.outputStream()
-                bitmap.compress(Bitmap.CompressFormat.JPEG, quality, tempStream)
-                tempStream.flush()
-                tempStream.close()
-                quality -= 10
-            } while (outFile.length() > maxSize && quality > 10)
-        }
+        do {
+            outFile.outputStream().use { stream ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)
+            }
+            quality -= 10
+        } while (outFile.length() > maxSize && quality > 10)
         return outFile
     }
 
@@ -337,15 +335,32 @@ class LoginActivity : AppCompatActivity() {
                     val uri = data?.data
                     uri?.let {
                         val file = copyUriToFile(this, it)
+                        // 立即显示选择的图片
+                        displaySelectedImage(file)
                         handleAvatarFileForUpload(file)
                     }
                 }
                 REQUEST_CODE_TAKE_PHOTO -> {
                     avatarUri?.let {
                         val file = copyUriToFile(this, it)
+                        // 立即显示拍照的图片
+                        displaySelectedImage(file)
                         handleAvatarFileForUpload(file)
                     }
                 }
+            }
+        }
+    }
+
+    // 显示选择的图片
+    private fun displaySelectedImage(file: File?) {
+        if (file != null && file.exists()) {
+            try {
+                val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+                ivAvatar.setImageBitmap(bitmap)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                Toast.makeText(this, "图片显示失败: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -421,14 +436,19 @@ class LoginActivity : AppCompatActivity() {
 
     // 拍照/选图后调用
     private fun handleAvatarFileForUpload(file: File?) {
-        if (file != null && file.exists()) {
-            // 压缩图片
-            val compressed = compressImageFile(file)
-            avatarFile = compressed
-            // 延迟+防抖+重试上传
-            uploadAvatarToOSS(compressed, retryCount = 1)
-        } else {
-            runOnUiThread { Toast.makeText(this, "❌ 图片处理失败，文件不存在", Toast.LENGTH_SHORT).show() }
+        try {
+            if (file != null && file.exists()) {
+                // 压缩图片
+                val compressed = compressImageFile(file)
+                avatarFile = compressed
+                // 延迟+防抖+重试上传
+                uploadAvatarToOSS(compressed, retryCount = 1)
+            } else {
+                runOnUiThread { Toast.makeText(this, "❌ 图片处理失败，文件不存在", Toast.LENGTH_SHORT).show() }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            runOnUiThread { Toast.makeText(this, "图片处理失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
     }
 
@@ -449,6 +469,7 @@ class LoginActivity : AppCompatActivity() {
             }
             override fun onResponse(call: Call, response: Response) {
                 val res = response.body?.string() ?: ""
+                Log.d("LoginActivity", "登录API响应: $res")
                 val obj = JSONObject(res)
                 if (obj.optInt("code") == 0) {
                     val token = obj.optString("token")
@@ -456,13 +477,24 @@ class LoginActivity : AppCompatActivity() {
                     // 保存用户信息
                     val user = obj.optJSONObject("user")
                     if (user != null) {
+                        val username = user.optString("username")
+                        val phone = user.optString("phone")
+                        val role = user.optString("role")
+                        val avatarUrl = user.optString("avatarUrl")
+                        val email = user.optString("email")
+                        
+                        Log.d("LoginActivity", "登录成功 - 用户名: $username, 手机号: $phone, 角色: $role, 头像: $avatarUrl, 邮箱: $email")
+                        
                         val prefs = getSharedPreferences("user", Context.MODE_PRIVATE)
                         prefs.edit()
-                            .putString("username", user.optString("username"))
-                            .putString("phone", user.optString("phone"))
-                            .putString("role", user.optString("role"))
-                            .putString("avatarUrl", user.optString("avatarUrl"))
+                            .putString("username", username)
+                            .putString("phone", phone)
+                            .putString("role", role)
+                            .putString("avatarUrl", avatarUrl)
+                            .putString("email", email)
                             .apply()
+                    } else {
+                        Log.e("LoginActivity", "登录响应中用户信息为空")
                     }
                     runOnUiThread {
                         Toast.makeText(this@LoginActivity, "登录成功", Toast.LENGTH_SHORT).show()
@@ -470,6 +502,7 @@ class LoginActivity : AppCompatActivity() {
                         finish()
                     }
                 } else {
+                    Log.e("LoginActivity", "登录失败: ${obj.optString("message")}")
                     runOnUiThread {
                         Toast.makeText(this@LoginActivity, obj.optString("message", "登录失败"), Toast.LENGTH_SHORT).show()
                     }
@@ -506,6 +539,7 @@ class LoginActivity : AppCompatActivity() {
             }
             override fun onResponse(call: Call, response: Response) {
                 val res = response.body?.string() ?: ""
+                Log.d("LoginActivity", "注册API响应: $res")
                 val obj = JSONObject(res)
                 if (obj.optInt("code") == 0) {
                     val token = obj.optString("token")
@@ -513,13 +547,24 @@ class LoginActivity : AppCompatActivity() {
                     // 保存用户信息
                     val user = obj.optJSONObject("user")
                     if (user != null) {
+                        val username = user.optString("username")
+                        val phone = user.optString("phone")
+                        val role = user.optString("role")
+                        val avatarUrl = user.optString("avatarUrl")
+                        val email = user.optString("email")
+                        
+                        Log.d("LoginActivity", "注册成功 - 用户名: $username, 手机号: $phone, 角色: $role, 头像: $avatarUrl, 邮箱: $email")
+                        
                         val prefs = getSharedPreferences("user", Context.MODE_PRIVATE)
                         prefs.edit()
-                            .putString("username", user.optString("username"))
-                            .putString("phone", user.optString("phone"))
-                            .putString("role", user.optString("role"))
-                            .putString("avatarUrl", user.optString("avatarUrl"))
+                            .putString("username", username)
+                            .putString("phone", phone)
+                            .putString("role", role)
+                            .putString("avatarUrl", avatarUrl)
+                            .putString("email", email)
                             .apply()
+                    } else {
+                        Log.e("LoginActivity", "注册响应中用户信息为空")
                     }
                     runOnUiThread {
                         Toast.makeText(this@LoginActivity, "注册成功", Toast.LENGTH_SHORT).show()
@@ -527,6 +572,7 @@ class LoginActivity : AppCompatActivity() {
                         finish()
                     }
                 } else {
+                    Log.e("LoginActivity", "注册失败: ${obj.optString("message")}")
                     runOnUiThread {
                         Toast.makeText(this@LoginActivity, obj.optString("message", "注册失败"), Toast.LENGTH_SHORT).show()
                     }

@@ -459,7 +459,7 @@ class HerbCollectionFragment : Fragment() {
     private fun showMapSelectionDialog() {
         val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_map_selection, null)
         val dialog = AlertDialog.Builder(requireContext())
-            .setTitle("🗺️ 手动修改位置")
+            .setTitle("📍 手动选择位置")
             .setView(dialogView)
             .setPositiveButton("确定") { dialog, _ ->
                 // 获取用户输入的经纬度

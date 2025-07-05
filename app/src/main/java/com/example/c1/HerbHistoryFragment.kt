@@ -3,6 +3,7 @@ package com.example.c1
 import android.app.AlertDialog
 import android.content.Context
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -81,13 +82,16 @@ class HerbHistoryFragment : Fragment() {
             }
             override fun onResponse(call: Call, response: Response) {
                 val res = response.body?.string() ?: ""
+                Log.d("HerbHistoryFragment", "API响应: $res")
                 val obj = try { JSONObject(res) } catch (e: Exception) { null }
                 val arr = obj?.optJSONArray("herbGrowths")
                 herbRecords.clear()
                 if (arr != null) {
                     for (i in 0 until arr.length()) {
                         val item = arr.getJSONObject(i)
-                        herbRecords.add(jsonToHerbRecord(item))
+                        val record = jsonToHerbRecord(item)
+                        Log.d("HerbHistoryFragment", "解析记录: 名称=${record.herbName}, 图片=${record.imagePath}")
+                        herbRecords.add(record)
                     }
                 }
                 requireActivity().runOnUiThread { updateUI() }
@@ -96,18 +100,31 @@ class HerbHistoryFragment : Fragment() {
     }
 
     private fun jsonToHerbRecord(obj: JSONObject): HerbRecord {
+        // 解析recordTime字符串为Date对象
+        val recordTimeStr = obj.optString("recordTime")
+        val collectionTime = try {
+            if (recordTimeStr.isNotEmpty()) {
+                val formatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.getDefault())
+                formatter.parse(recordTimeStr) ?: Date()
+            } else {
+                Date()
+            }
+        } catch (e: Exception) {
+            Date()
+        }
+        
         return HerbRecord(
             id = obj.optInt("id").toString(),
             herbName = obj.optString("herbName"),
-            locationCount = "-", // 可根据实际API补充
+            locationCount = "-", // API中没有此字段
             temperature = obj.optDouble("temperature").toString(),
             humidity = obj.optDouble("wet").toString(),
-            district = "-", // 可根据实际API补充
-            street = "-", // 可根据实际API补充
+            district = "-", // API中没有此字段
+            street = "-", // API中没有此字段
             growthDescription = obj.optString("des"),
             longitude = obj.optDouble("longitude"),
             latitude = obj.optDouble("latitude"),
-            collectionTime = Date(), // 可解析recordTime
+            collectionTime = collectionTime,
             imagePath = obj.optString("imgUrl"),
             status = "已上传",
             batchCode = obj.optString("batchCode")
@@ -130,22 +147,25 @@ class HerbHistoryFragment : Fragment() {
     }
 
     private fun showRecordDetail(record: HerbRecord) {
-        // 显示记录详情，这里可以弹出一个对话框或跳转到详情页面
+        // 显示记录详情对话框
         val detailMessage = """
             中药材详情：
             
             名称：${record.herbName}
-            数量：${record.locationCount}株
+            批次编码：${record.batchCode}
             温度：${record.temperature}°C
             湿度：${record.humidity}%
             位置：${String.format(Locale.getDefault(), "%.6f, %.6f", record.longitude, record.latitude)}
-            行政区：${record.district}
-            街道：${record.street}
             描述：${record.growthDescription}
             采集时间：${record.collectionTime}
         """.trimIndent()
         
-        Toast.makeText(context, detailMessage, Toast.LENGTH_LONG).show()
+        AlertDialog.Builder(requireContext())
+            .setTitle("🌿 中药材详情")
+            .setMessage(detailMessage)
+            .setPositiveButton("确定", null)
+            .setNegativeButton("删除") { _, _ -> confirmDeleteRecord(record) }
+            .show()
     }
 
     private fun confirmDeleteRecord(record: HerbRecord) {

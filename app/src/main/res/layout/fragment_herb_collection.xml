@@ -227,64 +227,7 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- 环境信息区域 -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="4dp"
-            app:cardBackgroundColor="#FFFFFF">
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="🌡️ 环境信息"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:textColor="#333333"
-                    android:layout_marginBottom="16dp"/>
-
-                <!-- 温度 -->
-                <com.google.android.material.textfield.TextInputLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="12dp"
-                    android:hint="温度（°C）"
-                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
-
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/etTemperature"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:inputType="numberDecimal"/>
-
-                </com.google.android.material.textfield.TextInputLayout>
-
-                <!-- 湿度 -->
-                <com.google.android.material.textfield.TextInputLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="12dp"
-                    android:hint="湿度（%）"
-                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
-
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/etHumidity"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:inputType="numberDecimal"/>
-
-                </com.google.android.material.textfield.TextInputLayout>
-
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
 
         <!-- 位置信息区域 -->
         <androidx.cardview.widget.CardView
@@ -326,7 +269,7 @@
                     android:id="@+id/btnSelectOnMap"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="🗺️ 地图选择位置"
+                    android:text="📍 手动选择位置"
                     android:textSize="12sp"
                     android:textColor="#FFFFFF"
                     android:background="@drawable/button_primary"
