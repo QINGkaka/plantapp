@@ -630,15 +630,8 @@ class HerbCollectionFragment : Fragment() {
             imageFile = compressed
             // 立即显示图片
             herbImageView.setImageBitmap(BitmapFactory.decodeFile(compressed.absolutePath))
-            // 延迟+防抖+重试上传
-            uploadImageToOSS(compressed, { ossUrl ->
-                btnSubmitHerb.text = "🔄 信息提交中..."
-                submitGrowthRecord(ossUrl)
-            }, { errorMsg ->
-                btnSubmitHerb.isEnabled = true
-                btnSubmitHerb.text = "✅ 提交中药材信息"
-                Toast.makeText(context, "❌ 图片上传失败: $errorMsg", Toast.LENGTH_LONG).show()
-            }, retryCount = 1)
+            // 显示成功提示
+            Toast.makeText(context, "✅ 图片选择成功，请填写信息后点击提交", Toast.LENGTH_SHORT).show()
         } else {
             if (isAdded && activity != null) {
                 activity?.runOnUiThread { Toast.makeText(context, "❌ 图片处理失败，文件不存在", Toast.LENGTH_SHORT).show() }
