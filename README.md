@@ -1,6 +1,8 @@
 # plantapp
 
 这是一个使用andriod原生框架开发的《中草药信息采集与识别app》
+OssConfig配置阿里云OSS，不要git追踪；
+运行植物识别时，不要开代理。
 
 ### 额外配置
 
