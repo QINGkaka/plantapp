@@ -49,6 +49,10 @@ class PlantIdentifyFragment : Fragment() {
     private lateinit var oss: OSSClient
     private val REQUEST_CODE_PICK_IMAGE = 102
     private lateinit var uploadProgressBar: android.widget.ProgressBar
+    private lateinit var identifyProgressBar: android.widget.ProgressBar
+    private lateinit var progressText: TextView
+    private var isUploading = false
+    private var isIdentifying = false
 
     private val PERMISSIONS = arrayOf(
         Manifest.permission.CAMERA,
@@ -91,8 +95,14 @@ class PlantIdentifyFragment : Fragment() {
             resultText = view.findViewById(R.id.resultText)
             val btnPick = view.findViewById<Button>(R.id.btnPick)
             uploadProgressBar = view.findViewById(R.id.uploadProgressBar)
+            identifyProgressBar = view.findViewById(R.id.identifyProgressBar)
+            progressText = view.findViewById(R.id.progressText)
+            
             uploadProgressBar.progress = 0
             uploadProgressBar.visibility = View.GONE
+            identifyProgressBar.progress = 0
+            identifyProgressBar.visibility = View.GONE
+            progressText.visibility = View.GONE
 
             // 初始化OSS
             initOSS()
@@ -291,17 +301,22 @@ class PlantIdentifyFragment : Fragment() {
         val objectKey = "identify_images/${System.currentTimeMillis()}.jpg"
         val put = PutObjectRequest(bucketName, objectKey, localFile.absolutePath)
         // 禁用上传按钮，防止重复上传
+        isUploading = true
         if (isAdded && activity != null) {
             activity?.runOnUiThread {
                 view?.findViewById<Button>(R.id.btnPick)?.isEnabled = false
                 uploadProgressBar.progress = 0
                 uploadProgressBar.visibility = View.VISIBLE
+                progressText.visibility = View.VISIBLE
+                progressText.text = "📤 正在上传图片..."
+                resultText.text = "🔄 准备上传图片..."
             }
         }
         put.progressCallback = com.alibaba.sdk.android.oss.callback.OSSProgressCallback<PutObjectRequest> { _, currentSize, totalSize ->
             val percent = if (totalSize > 0) (currentSize * 100 / totalSize).toInt() else 0
             activity?.runOnUiThread {
                 uploadProgressBar.progress = percent
+                progressText.text = "📤 正在上传图片... $percent%"
             }
         }
         Handler(Looper.getMainLooper()).postDelayed({
@@ -312,8 +327,11 @@ class PlantIdentifyFragment : Fragment() {
                     val url = "${OssConfig.OSS_URL_PREFIX}$objectKey"
                     if (isAdded && activity != null) {
                         activity?.runOnUiThread {
+                            isUploading = false
                             view?.findViewById<Button>(R.id.btnPick)?.isEnabled = true
                             uploadProgressBar.visibility = View.GONE
+                            progressText.visibility = View.GONE
+                            resultText.text = "🔄 图片上传完成，正在识别..."
                             uploadImageUrlToServer(url)
                         }
                     }
@@ -325,8 +343,10 @@ class PlantIdentifyFragment : Fragment() {
                     } else {
                         if (isAdded && activity != null) {
                             activity?.runOnUiThread {
+                                isUploading = false
                                 view?.findViewById<Button>(R.id.btnPick)?.isEnabled = true
                                 uploadProgressBar.visibility = View.GONE
+                                progressText.visibility = View.GONE
                                 resultText.text = "❌ 图片上传失败: ${e.message}"
                             }
                         }
@@ -337,6 +357,9 @@ class PlantIdentifyFragment : Fragment() {
     }
 
     private fun uploadImageUrlToServer(imageUrl: String) {
+        isIdentifying = true
+        showIdentifyProgress()
+        
         try {
             val client = OkHttpClient()
             val requestBody = MultipartBody.Builder()
@@ -349,11 +372,15 @@ class PlantIdentifyFragment : Fragment() {
                 .build()
             client.newCall(request).enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
-                    requireActivity().runOnUiThread { resultText.text = "❌ 上传失败: ${e.message}" }
+                    requireActivity().runOnUiThread { 
+                        hideIdentifyProgress()
+                        resultText.text = "❌ 识别失败: ${e.message}" 
+                    }
                 }
                 override fun onResponse(call: Call, response: Response) {
                     val res = response.body?.string() ?: "无返回"
                     requireActivity().runOnUiThread {
+                        hideIdentifyProgress()
                         try {
                             val parsedResult = parseIdentificationResult(res)
                             resultText.text = parsedResult
@@ -429,6 +456,46 @@ class PlantIdentifyFragment : Fragment() {
         }
     }
 
+    private fun showIdentifyProgress() {
+        if (isAdded && activity != null) {
+            activity?.runOnUiThread {
+                identifyProgressBar.visibility = View.VISIBLE
+                progressText.visibility = View.VISIBLE
+                progressText.text = "🔍 正在识别植物..."
+                resultText.text = "🔄 正在分析图片特征..."
+                
+                // 模拟识别进度
+                var progress = 0
+                val handler = Handler(Looper.getMainLooper())
+                val runnable = object : Runnable {
+                    override fun run() {
+                        if (isIdentifying && progress < 90) {
+                            progress += 5
+                            identifyProgressBar.progress = progress
+                            when {
+                                progress < 30 -> progressText.text = "🔍 正在识别植物... $progress%"
+                                progress < 60 -> progressText.text = "📊 正在分析特征... $progress%"
+                                progress < 90 -> progressText.text = "🎯 正在匹配结果... $progress%"
+                            }
+                            handler.postDelayed(this, 200)
+                        }
+                    }
+                }
+                handler.post(runnable)
+            }
+        }
+    }
+    
+    private fun hideIdentifyProgress() {
+        isIdentifying = false
+        if (isAdded && activity != null) {
+            activity?.runOnUiThread {
+                identifyProgressBar.visibility = View.GONE
+                progressText.visibility = View.GONE
+            }
+        }
+    }
+    
     // 拍照/选图后调用
     private fun handleImageFileForUpload(file: File?) {
         if (file != null && file.exists()) {

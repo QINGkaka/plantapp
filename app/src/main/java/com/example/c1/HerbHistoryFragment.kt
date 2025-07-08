@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import okhttp3.*
 import org.json.JSONObject
@@ -22,9 +23,24 @@ class HerbHistoryFragment : Fragment() {
     private lateinit var rvHerbHistory: RecyclerView
     private lateinit var emptyStateLayout: LinearLayout
     private lateinit var fabAddHerb: FloatingActionButton
+    private lateinit var loadingLayout: LinearLayout
+    private lateinit var swipeRefreshLayout: SwipeRefreshLayout
 
     private val herbRecords = mutableListOf<HerbRecord>()
     private var token: String? = null
+    private var isLoading = false
+    private var lastLoadTime = 0L
+    private val CACHE_DURATION = 30000L // 30秒缓存
+    
+    // 安全的URL拼接函数，避免多余斜杠
+    private fun safeUrlJoin(base: String, path: String): String {
+        return base.trimEnd('/') + "/" + path.trimStart('/')
+    }
+    
+    companion object {
+        private var globalLastLoadTime = 0L
+        private var globalHerbRecords = mutableListOf<HerbRecord>()
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -40,13 +56,52 @@ class HerbHistoryFragment : Fragment() {
         initializeViews(view)
         setupRecyclerView()
         setupClickListeners()
-        loadUserGrowthRecordsByToken()
+        
+        // 恢复全局缓存的数据
+        if (globalHerbRecords.isNotEmpty()) {
+            herbRecords.clear()
+            herbRecords.addAll(globalHerbRecords)
+            lastLoadTime = globalLastLoadTime
+        }
+        
+        // 检查是否需要重新加载数据
+        if (shouldReloadData()) {
+            Log.d("HerbHistoryFragment", "需要重新加载数据")
+            loadUserGrowthRecordsByToken()
+        } else {
+            // 使用缓存数据
+            Log.d("HerbHistoryFragment", "使用缓存数据，共${herbRecords.size}条记录")
+            updateUI()
+        }
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        // 页面恢复时，只有在数据为空且需要刷新时才加载
+        if (herbRecords.isEmpty() && shouldReloadData()) {
+            Log.d("HerbHistoryFragment", "onResume: 数据为空，需要重新加载")
+            loadUserGrowthRecordsByToken()
+        } else {
+            Log.d("HerbHistoryFragment", "onResume: 使用现有数据，共${herbRecords.size}条记录")
+        }
+    }
+    
+    private fun shouldReloadData(): Boolean {
+        val currentTime = System.currentTimeMillis()
+        val timeDiff = currentTime - lastLoadTime
+        val shouldReload = herbRecords.isEmpty() || timeDiff > CACHE_DURATION
+        
+        Log.d("HerbHistoryFragment", "缓存检查: 数据条数=${herbRecords.size}, 时间差=${timeDiff}ms, 需要重新加载=$shouldReload")
+        
+        return shouldReload
     }
 
     private fun initializeViews(view: View) {
         rvHerbHistory = view.findViewById(R.id.rvHerbHistory)
         emptyStateLayout = view.findViewById(R.id.emptyStateLayout)
         fabAddHerb = view.findViewById(R.id.fabAddHerb)
+        loadingLayout = view.findViewById(R.id.loadingLayout)
+        swipeRefreshLayout = view.findViewById(R.id.swipeRefreshLayout)
     }
 
     private fun setupRecyclerView() {
@@ -58,26 +113,60 @@ class HerbHistoryFragment : Fragment() {
             // 切换到采集页面
             switchToCollectionFragment()
         }
+        
+        // 设置下拉刷新
+        swipeRefreshLayout.setOnRefreshListener {
+            // 强制刷新数据
+            lastLoadTime = 0L
+            loadUserGrowthRecordsByToken()
+        }
+        
+        // 空状态页面的刷新按钮
+        view?.findViewById<android.widget.Button>(R.id.btnRefresh)?.setOnClickListener {
+            lastLoadTime = 0L
+            loadUserGrowthRecordsByToken()
+        }
     }
 
     private fun loadUserGrowthRecordsByToken() {
+        if (isLoading) {
+            return // 防止重复请求
+        }
+        
         val prefs = requireContext().getSharedPreferences("user", Context.MODE_PRIVATE)
         val token = prefs.getString("token", null)
         if (token.isNullOrBlank()) {
             Toast.makeText(context, "请先登录", Toast.LENGTH_SHORT).show()
             return
         }
+        
         this.token = token
-        val client = OkHttpClient()
+        isLoading = true
+        showLoadingState()
+        
+        // 设置网络超时
+        val client = OkHttpClient.Builder()
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+            
         val request = Request.Builder()
-            .url(ApiConfig.BASE_URL + "herb-info-service/growth/userToken")
+            .url(safeUrlJoin(ApiConfig.BASE_URL, "herb-info-service/growth/userToken"))
             .addHeader("Authorization", "Bearer $token")
             .get()
             .build()
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                requireActivity().runOnUiThread {
-                    Toast.makeText(context, "获取历史记录失败: ${e.message}", Toast.LENGTH_LONG).show()
+                isLoading = false
+                if (isAdded && activity != null) {
+                    activity?.runOnUiThread {
+                        if (isAdded && context != null) {
+                            hideLoadingState()
+                            swipeRefreshLayout.isRefreshing = false
+                            Toast.makeText(context, "获取历史记录失败: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
                 }
             }
             override fun onResponse(call: Call, response: Response) {
@@ -94,7 +183,24 @@ class HerbHistoryFragment : Fragment() {
                         herbRecords.add(record)
                     }
                 }
-                requireActivity().runOnUiThread { updateUI() }
+                
+                lastLoadTime = System.currentTimeMillis()
+                globalLastLoadTime = lastLoadTime
+                isLoading = false
+                
+                if (isAdded && activity != null) {
+                    activity?.runOnUiThread {
+                        if (isAdded && context != null) {
+                            // 保存到全局缓存
+                            globalHerbRecords.clear()
+                            globalHerbRecords.addAll(herbRecords)
+                            
+                            hideLoadingState()
+                            swipeRefreshLayout.isRefreshing = false
+                            updateUI()
+                        }
+                    }
+                }
             }
         })
     }
@@ -131,6 +237,20 @@ class HerbHistoryFragment : Fragment() {
         )
     }
 
+    private fun showLoadingState() {
+        if (isAdded && context != null) {
+            loadingLayout.visibility = View.VISIBLE
+            rvHerbHistory.visibility = View.GONE
+            emptyStateLayout.visibility = View.GONE
+        }
+    }
+    
+    private fun hideLoadingState() {
+        if (isAdded && context != null) {
+            loadingLayout.visibility = View.GONE
+        }
+    }
+    
     private fun updateUI() {
         if (herbRecords.isEmpty()) {
             rvHerbHistory.visibility = View.GONE
@@ -181,20 +301,28 @@ class HerbHistoryFragment : Fragment() {
         val tk = token ?: return
         val client = OkHttpClient()
         val request = Request.Builder()
-            .url(ApiConfig.BASE_URL + "herb-info-service/growth/$growthId")
+            .url(safeUrlJoin(ApiConfig.BASE_URL, "herb-info-service/growth/$growthId"))
             .addHeader("Authorization", "Bearer $tk")
             .delete()
             .build()
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                requireActivity().runOnUiThread {
-                    Toast.makeText(context, "删除失败: ${e.message}", Toast.LENGTH_LONG).show()
+                if (isAdded && activity != null) {
+                    activity?.runOnUiThread {
+                        if (isAdded && context != null) {
+                            Toast.makeText(context, "删除失败: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
                 }
             }
             override fun onResponse(call: Call, response: Response) {
-                requireActivity().runOnUiThread {
-                    Toast.makeText(context, "删除成功", Toast.LENGTH_SHORT).show()
-                    loadUserGrowthRecordsByToken()
+                if (isAdded && activity != null) {
+                    activity?.runOnUiThread {
+                        if (isAdded && context != null) {
+                            Toast.makeText(context, "删除成功", Toast.LENGTH_SHORT).show()
+                            loadUserGrowthRecordsByToken()
+                        }
+                    }
                 }
             }
         })

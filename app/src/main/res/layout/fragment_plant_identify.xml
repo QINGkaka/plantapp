@@ -107,6 +107,32 @@
             android:progress="0"
             android:layout_marginBottom="16dp"/>
 
+        <!-- 识别进度条和进度文本 -->
+        <ProgressBar
+            android:id="@+id/identifyProgressBar"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="8dp"
+            android:layout_marginTop="0dp"
+            android:layout_marginBottom="8dp"
+            android:progress="0"
+            android:max="100"
+            android:indeterminate="false"
+            android:visibility="gone"
+            android:progressTint="#4CAF50"
+            android:progressBackgroundTint="#E0E0E0"/>
+
+        <TextView
+            android:id="@+id/progressText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="识别进度"
+            android:textColor="#666666"
+            android:textSize="14sp"
+            android:gravity="center"
+            android:layout_marginBottom="8dp"
+            android:visibility="gone"/>
+
         <!-- 识别结果区域 -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"

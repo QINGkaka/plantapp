@@ -36,7 +36,7 @@ class HerbHistoryAdapter(
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val record = herbRecords[position]
         
-        // 加载图片
+        // 加载图片 - 优化加载速度
         Log.d("HerbHistoryAdapter", "图片URL: ${record.imagePath}")
         if (!record.imagePath.isNullOrBlank()) {
             Glide.with(holder.ivHerbImage.context)
@@ -44,6 +44,10 @@ class HerbHistoryAdapter(
                 .centerCrop()
                 .placeholder(R.mipmap.ic_launcher)
                 .error(R.mipmap.ic_launcher)
+                .override(200, 200) // 限制图片尺寸
+                .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL) // 缓存所有尺寸
+                .skipMemoryCache(false) // 使用内存缓存
+                .priority(com.bumptech.glide.Priority.NORMAL) // 设置优先级
                 .into(holder.ivHerbImage)
             Log.d("HerbHistoryAdapter", "正在加载图片: ${record.imagePath}")
         } else {

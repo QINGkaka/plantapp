@@ -45,14 +45,14 @@ import android.os.Looper
 class HerbCollectionFragment : Fragment() {
     private lateinit var herbImageView: ImageView
     private lateinit var tvLocation: TextView
-    private lateinit var etHerbName: AutoCompleteTextView
+    private lateinit var etHerbName: com.google.android.material.textfield.TextInputEditText
     private lateinit var etBatchCode: EditText
     private lateinit var etHerbOrigin: EditText
     private lateinit var etLocationCount: EditText
     private lateinit var etTemperature: EditText
     private lateinit var etHumidity: EditText
-    private lateinit var etDistrict: EditText
-    private lateinit var etStreet: EditText
+    private lateinit var etDistrict: com.google.android.material.textfield.TextInputEditText
+    private lateinit var etStreet: com.google.android.material.textfield.TextInputEditText
     private lateinit var etGrowthDescription: EditText
     private lateinit var btnTakeHerbPhoto: Button
     private lateinit var btnSubmitHerb: Button
@@ -76,13 +76,19 @@ class HerbCollectionFragment : Fragment() {
     )
     private val permissionRequestCode = 101
 
-    // 常见中药材列表
-    private val commonHerbs = arrayOf(
-        "人参", "当归", "黄芪", "枸杞", "金银花", "菊花", "薄荷", "甘草", "茯苓", "白术",
-        "白芍", "川芎", "丹参", "红花", "桃仁", "杏仁", "半夏", "陈皮", "山楂", "决明子",
-        "何首乌", "灵芝", "冬虫夏草", "天麻", "杜仲", "牛膝", "续断", "骨碎补", "补骨脂", "菟丝子",
-        "待识别" // 用于未知中药
-    )
+    // 从后端获取的中药材列表
+    private var herbList: List<String> = listOf()
+    
+    // 行政区和街道级联选择相关变量
+    private var districtList: List<String> = listOf()
+    private var streetList: List<String> = listOf()
+    private var districtIdMap: Map<String, Int> = mapOf() // 名称->ID
+    private var streetIdMap: Map<String, Int> = mapOf()   // 名称->ID
+
+    // 安全的URL拼接函数，避免多余斜杠
+    private fun safeUrlJoin(base: String, path: String): String {
+        return base.trimEnd('/') + "/" + path.trimStart('/')
+    }
 
     private val takePictureLauncher = registerForActivityResult(
         ActivityResultContracts.TakePicture()
@@ -117,6 +123,7 @@ class HerbCollectionFragment : Fragment() {
             setupLocationManager()
             setupClickListeners()
             setupHerbNameSpinner()
+            setupDistrictAndStreetSpinners()
             // 初始化OSS
             initOSS()
             // 检查并申请权限
@@ -182,13 +189,338 @@ class HerbCollectionFragment : Fragment() {
 
     private fun setupHerbNameSpinner() {
         try {
-            // 创建自动完成适配器
-            val adapter = ArrayAdapter(requireContext(), android.R.layout.simple_dropdown_item_1line, commonHerbs)
-            etHerbName.setAdapter(adapter)
-            etHerbName.threshold = 1 // 输入1个字符就开始显示建议
+            // 从后端获取中药列表
+            fetchHerbList { herbs ->
+                herbList = herbs
+                activity?.runOnUiThread {
+                    // 设置中药名称点击事件
+                    etHerbName.setOnClickListener {
+                        showHerbNameSelectionDialog()
+                    }
+                }
+            }
         } catch (e: Exception) {
             Toast.makeText(context, "中药名称选择器初始化失败: ${e.message}", Toast.LENGTH_LONG).show()
         }
+    }
+    
+    private fun showHerbNameSelectionDialog() {
+        if (herbList.isEmpty()) {
+            Toast.makeText(context, "正在加载中药数据...", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        val items = herbList.toTypedArray()
+        AlertDialog.Builder(requireContext())
+            .setTitle("选择中药名称")
+            .setItems(items) { _, which ->
+                val selectedHerb = herbList[which]
+                etHerbName.setText(selectedHerb)
+            }
+            .show()
+    }
+    
+    private fun fetchHerbList(callback: (List<String>) -> Unit) {
+        val url = safeUrlJoin(ApiConfig.BASE_URL, "herb-info-service/herbs")
+        Log.d("HerbCollection", "请求中药列表URL: $url")
+        
+        // 获取token
+        val prefs = requireContext().getSharedPreferences("user", Context.MODE_PRIVATE)
+        val token = prefs.getString("token", null)
+        
+        val client = OkHttpClient.Builder()
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .get()
+        
+        // 如果有token，添加认证头
+        if (!token.isNullOrBlank()) {
+            requestBuilder.addHeader("Authorization", "Bearer $token")
+        }
+        
+        val request = requestBuilder.build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                activity?.runOnUiThread {
+                    Toast.makeText(context, "❌ 获取中药列表失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val body = response.body?.string() ?: return
+                Log.d("HerbCollection", "中药列表HTTP状态码: ${response.code}")
+                Log.d("HerbCollection", "中药列表body: $body")
+                
+                // 处理401错误
+                if (response.code == 401) {
+                    activity?.runOnUiThread {
+                        Toast.makeText(context, "❌ 请先登录", Toast.LENGTH_SHORT).show()
+                    }
+                    return
+                }
+                
+                try {
+                    val jsonObj = org.json.JSONObject(body)
+                    val jsonArr = jsonObj.getJSONArray("herbs")
+                    val list = mutableListOf<String>()
+                    for (i in 0 until jsonArr.length()) {
+                        val obj = jsonArr.getJSONObject(i)
+                        val name = obj.getString("name")
+                        list.add(name)
+                    }
+                    // 添加"待识别"选项
+                    list.add("待识别")
+                    activity?.runOnUiThread { 
+                        callback(list)
+                    }
+                } catch (e: Exception) {
+                    Log.e("HerbCollection", "解析中药列表数据失败: ${e.message}\nbody=$body")
+                    activity?.runOnUiThread {
+                        Toast.makeText(context, "❌ 解析中药列表数据失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        })
+    }
+    
+    private fun setupDistrictAndStreetSpinners() {
+        try {
+            // 初始化街道选择框为禁用状态
+            etStreet.isEnabled = false
+            // 注意：这里不需要动态设置hint，布局文件中已经有正确的hint
+            
+            // 获取所有行政区
+            fetchDistricts { districts, idMap ->
+                districtList = districts
+                districtIdMap = idMap
+                Log.d("HerbCollection", "获取到${districts.size}个行政区")
+                
+                activity?.runOnUiThread {
+                    Log.d("HerbCollection", "行政区数据加载完成")
+                    
+                    // 设置行政区点击事件
+                    etDistrict.setOnClickListener {
+                        // 阻止键盘弹出
+                        etDistrict.clearFocus()
+                        showDistrictSelectionDialog()
+                    }
+                    
+                    // 阻止键盘弹出
+                    etDistrict.setOnFocusChangeListener { _, hasFocus ->
+                        if (hasFocus) {
+                            etDistrict.clearFocus()
+                            showDistrictSelectionDialog()
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Toast.makeText(context, "行政区街道选择器初始化失败: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+    
+    private fun showDistrictSelectionDialog() {
+        if (districtList.isEmpty()) {
+            Toast.makeText(context, "正在加载行政区数据...", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        val items = districtList.toTypedArray()
+        AlertDialog.Builder(requireContext())
+            .setTitle("选择行政区")
+            .setItems(items) { _, which ->
+                val selectedDistrict = districtList[which]
+                val districtId = districtIdMap[selectedDistrict] ?: return@setItems
+                Log.d("HerbCollection", "选择了行政区: $selectedDistrict, ID: $districtId")
+                
+                etDistrict.setText(selectedDistrict)
+                
+                // 启用街道选择
+                etStreet.isEnabled = true
+                // 不需要动态设置hint，布局文件中已经有正确的hint
+                etStreet.text = null
+                
+                // 获取对应街道
+                fetchStreets(districtId) { streets, streetMap ->
+                    streetList = streets
+                    streetIdMap = streetMap
+                    Log.d("HerbCollection", "获取到${streets.size}个街道")
+                    
+                    activity?.runOnUiThread {
+                        Log.d("HerbCollection", "街道数据加载完成")
+                        
+                        // 设置街道点击事件
+                        etStreet.setOnClickListener {
+                            // 阻止键盘弹出
+                            etStreet.clearFocus()
+                            showStreetSelectionDialog()
+                        }
+                        
+                        // 阻止键盘弹出
+                        etStreet.setOnFocusChangeListener { _, hasFocus ->
+                            if (hasFocus) {
+                                etStreet.clearFocus()
+                                showStreetSelectionDialog()
+                            }
+                        }
+                    }
+                }
+            }
+            .show()
+    }
+    
+    private fun showStreetSelectionDialog() {
+        if (streetList.isEmpty()) {
+            Toast.makeText(context, "正在加载街道数据...", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        val items = streetList.toTypedArray()
+        AlertDialog.Builder(requireContext())
+            .setTitle("选择街道")
+            .setItems(items) { _, which ->
+                val selectedStreet = streetList[which]
+                Log.d("HerbCollection", "选择了街道: $selectedStreet")
+                etStreet.setText(selectedStreet)
+            }
+            .show()
+    }
+    
+    private fun fetchDistricts(callback: (List<String>, Map<String, Int>) -> Unit) {
+        val url = safeUrlJoin(ApiConfig.BASE_URL, "herb-info-service/division/district")
+        Log.d("HerbCollection", "请求URL: $url")
+        
+        // 获取token
+        val prefs = requireContext().getSharedPreferences("user", Context.MODE_PRIVATE)
+        val token = prefs.getString("token", null)
+        
+        val client = OkHttpClient.Builder()
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .get()
+        
+        // 如果有token，添加认证头
+        if (!token.isNullOrBlank()) {
+            requestBuilder.addHeader("Authorization", "Bearer $token")
+        }
+        
+        val request = requestBuilder.build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                activity?.runOnUiThread {
+                    Toast.makeText(context, "❌ 获取行政区失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val body = response.body?.string() ?: return
+                Log.d("HerbCollection", "HTTP状态码: ${response.code}")
+                Log.d("HerbCollection", "districts body: $body")
+                
+                // 处理401错误
+                if (response.code == 401) {
+                    activity?.runOnUiThread {
+                        Toast.makeText(context, "❌ 请先登录", Toast.LENGTH_SHORT).show()
+                    }
+                    return
+                }
+                
+                try {
+                    val jsonObj = org.json.JSONObject(body)
+                    val jsonArr = jsonObj.getJSONArray("districts")
+                    val list = mutableListOf<String>()
+                    val map = mutableMapOf<String, Int>()
+                    for (i in 0 until jsonArr.length()) {
+                        val obj = jsonArr.getJSONObject(i)
+                        val name = obj.getString("name")
+                        val id = obj.getInt("id")
+                        list.add(name)
+                        map[name] = id
+                    }
+                    activity?.runOnUiThread { 
+                        callback(list, map)
+                    }
+                } catch (e: Exception) {
+                    Log.e("HerbCollection", "解析行政区数据失败: ${e.message}\nbody=$body")
+                    activity?.runOnUiThread {
+                        Toast.makeText(context, "❌ 解析行政区数据失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        })
+    }
+    
+    private fun fetchStreets(districtId: Int, callback: (List<String>, Map<String, Int>) -> Unit) {
+        // districtId实际需要districtName，需做映射
+        val districtName = districtList.find { districtIdMap[it] == districtId } ?: ""
+        val url = safeUrlJoin(ApiConfig.BASE_URL, "herb-info-service/division/$districtName/street")
+        
+        // 获取token
+        val prefs = requireContext().getSharedPreferences("user", Context.MODE_PRIVATE)
+        val token = prefs.getString("token", null)
+        
+        val client = OkHttpClient.Builder()
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .get()
+        
+        // 如果有token，添加认证头
+        if (!token.isNullOrBlank()) {
+            requestBuilder.addHeader("Authorization", "Bearer $token")
+        }
+        
+        val request = requestBuilder.build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                activity?.runOnUiThread {
+                    Toast.makeText(context, "❌ 获取街道失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val body = response.body?.string() ?: return
+                Log.d("HerbCollection", "streets body: $body")
+                
+                // 处理401错误
+                if (response.code == 401) {
+                    activity?.runOnUiThread {
+                        Toast.makeText(context, "❌ 请先登录", Toast.LENGTH_SHORT).show()
+                    }
+                    return
+                }
+                
+                try {
+                    val jsonObj = org.json.JSONObject(body)
+                    val jsonArr = jsonObj.getJSONArray("streets")
+                    val list = mutableListOf<String>()
+                    val map = mutableMapOf<String, Int>()
+                    for (i in 0 until jsonArr.length()) {
+                        val obj = jsonArr.getJSONObject(i)
+                        val name = obj.getString("streetName")
+                        val id = obj.getInt("streetId")
+                        list.add(name)
+                        map[name] = id
+                    }
+                    activity?.runOnUiThread { 
+                        callback(list, map)
+                    }
+                } catch (e: Exception) {
+                    Log.e("HerbCollection", "解析街道数据失败: ${e.message}\nbody=$body")
+                    activity?.runOnUiThread {
+                        Toast.makeText(context, "❌ 解析街道数据失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        })
     }
 
     private fun checkPermissions(): Boolean {
@@ -401,29 +733,37 @@ class HerbCollectionFragment : Fragment() {
         }
         val requestBody = RequestBody.create("application/json; charset=utf-8".toMediaType(), json.toString())
         val request = Request.Builder()
-            .url(ApiConfig.BASE_URL + "herb-info-service/growth")
+            .url(safeUrlJoin(ApiConfig.BASE_URL, "herb-info-service/growth"))
             .addHeader("Authorization", "Bearer $token")
             .post(requestBody)
             .build()
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                requireActivity().runOnUiThread {
-                    btnSubmitHerb.isEnabled = true
-                    btnSubmitHerb.text = "✅ 提交中药材信息"
-                    Toast.makeText(context, "提交失败: ${e.message}", Toast.LENGTH_LONG).show()
+                if (isAdded && activity != null) {
+                    activity?.runOnUiThread {
+                        if (isAdded && context != null) {
+                            btnSubmitHerb.isEnabled = true
+                            btnSubmitHerb.text = "✅ 提交中药材信息"
+                            Toast.makeText(context, "提交失败: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
                 }
             }
             override fun onResponse(call: Call, response: Response) {
                 val res = response.body?.string() ?: ""
-                requireActivity().runOnUiThread {
-                    btnSubmitHerb.isEnabled = true
-                    btnSubmitHerb.text = "✅ 提交中药材信息"
-                    val obj = try { org.json.JSONObject(res) } catch (e: Exception) { null }
-                    if (obj != null && obj.optInt("code") == 0) {
-                        Toast.makeText(context, "生长记录提交成功", Toast.LENGTH_LONG).show()
-                        clearForm()
-                    } else {
-                        Toast.makeText(context, obj?.optString("message", "提交失败") ?: "提交失败", Toast.LENGTH_LONG).show()
+                if (isAdded && activity != null) {
+                    activity?.runOnUiThread {
+                        if (isAdded && context != null) {
+                            btnSubmitHerb.isEnabled = true
+                            btnSubmitHerb.text = "✅ 提交中药材信息"
+                            val obj = try { org.json.JSONObject(res) } catch (e: Exception) { null }
+                            if (obj != null && obj.optInt("code") == 0) {
+                                Toast.makeText(context, "生长记录提交成功", Toast.LENGTH_LONG).show()
+                                clearForm()
+                            } else {
+                                Toast.makeText(context, obj?.optString("message", "提交失败") ?: "提交失败", Toast.LENGTH_LONG).show()
+                            }
+                        }
                     }
                 }
             }
@@ -431,13 +771,13 @@ class HerbCollectionFragment : Fragment() {
     }
 
     private fun clearForm() {
-        etHerbName.text.clear()
-        etLocationCount.text.clear()
-        etTemperature.text.clear()
-        etHumidity.text.clear()
-        etDistrict.text.clear()
-        etStreet.text.clear()
-        etGrowthDescription.text.clear()
+        etHerbName.text?.clear()
+        etLocationCount.text?.clear()
+        etTemperature.text?.clear()
+        etHumidity.text?.clear()
+        etDistrict.text?.clear()
+        etStreet.text?.clear()
+        etGrowthDescription.text?.clear()
         herbImageView.setImageResource(R.mipmap.ic_launcher)
         imageFile = null
         imageUri = null

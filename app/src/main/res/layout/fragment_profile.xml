@@ -60,6 +60,30 @@
     </LinearLayout>
 
     <Button
+        android:id="@+id/btnEditProfile"
+        android:layout_width="220dp"
+        android:layout_height="48dp"
+        android:text="编辑资料"
+        android:textSize="16sp"
+        android:textColor="#fff"
+        android:background="@drawable/button_primary"
+        android:layout_marginTop="32dp"
+        android:layout_gravity="center_horizontal"
+        android:elevation="4dp"/>
+
+    <Button
+        android:id="@+id/btnChangePassword"
+        android:layout_width="220dp"
+        android:layout_height="48dp"
+        android:text="修改密码"
+        android:textSize="16sp"
+        android:textColor="#fff"
+        android:background="@drawable/button_primary"
+        android:layout_marginTop="16dp"
+        android:layout_gravity="center_horizontal"
+        android:elevation="4dp"/>
+
+    <Button
         android:id="@+id/btnLogout"
         android:layout_width="220dp"
         android:layout_height="48dp"
@@ -67,7 +91,7 @@
         android:textSize="16sp"
         android:textColor="#fff"
         android:background="@drawable/button_logout_red"
-        android:layout_marginTop="48dp"
+        android:layout_marginTop="16dp"
         android:layout_gravity="center_horizontal"
         android:elevation="4dp"/>
 </LinearLayout> 
